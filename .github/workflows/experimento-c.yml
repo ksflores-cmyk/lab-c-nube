@@ -1,0 +1,47 @@
+# Experimento C en la nube (repo publico). Sin la variable C_NUBE_ACTIVO=si el trabajo no arranca.
+# armar-repo-publico.ps1 lo copia al repo publico lab-c-nube (decision de Kevin, 20 nov 2026).
+# Para activarlo hace falta, en este orden y con el "Si" de Kevin:
+#   1. Kevin escribe los secretos MT5_LOGIN, MT5_PASSWORD y MT5_SERVER (Settings > Secrets and variables > Actions).
+#   2. Kevin aprueba la descarga del instalador gratuito de MT5 en la maquina de la nube ("Si descarga nube").
+#   3. Se crea la variable de repositorio C_NUBE_ACTIVO=si. Sin esa variable el trabajo ni siquiera arranca.
+#   4. Prueba de humo con "Run workflow" (humo = true) fuera de horario: MT5 entra, carga el asesor y cierra a los 3 min.
+#   5. Solo despues se descomenta "schedule" y se apaga la tarea de las 7:05 de la PC (nunca las dos el mismo dia).
+name: experimento-c
+on:
+  workflow_dispatch:
+    inputs:
+      humo:
+        description: 'Prueba de humo: entra a la demo, carga el asesor y cierra a los 3 minutos (no espera la venta)'
+        type: boolean
+        default: true
+  # schedule:
+  #   - cron: '47 12 * * 1-5'   # 12:47 UTC = 7:47 NY en INVIERNO (hasta el 14 mar 2027); el asesor espera solo a las 8:30.
+  #                             # En verano de EE. UU. (desde el 14 mar 2027) cambiar a '47 11 * * 1-5' (Codex c1, H6).
+concurrency:
+  group: experimento-c
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  c:
+    if: vars.C_NUBE_ACTIVO == 'si'
+    runs-on: windows-latest
+    timeout-minutes: 170
+    steps:
+      - uses: actions/checkout@v4
+      - name: MT5 con CalibracionC (solo demo) hasta el registro del dia
+        shell: powershell
+        env:
+          C_NUBE_ACTIVO: ${{ vars.C_NUBE_ACTIVO }}
+          MT5_LOGIN: ${{ secrets.MT5_LOGIN }}
+          MT5_PASSWORD: ${{ secrets.MT5_PASSWORD }}
+          MT5_SERVER: ${{ secrets.MT5_SERVER }}
+          HUMO: ${{ inputs.humo }}
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File nube\correr-c-nube.ps1 -Asesor asesor\CalibracionC.mq5 -Salida "$env:RUNNER_TEMP\c-nube" -Humo "$env:HUMO"
+      - name: Guardar el registro (json, ticks y registros del asesor; sin claves ni IPs)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: experimento-c-${{ github.run_id }}
+          path: ${{ runner.temp }}/c-nube
+          retention-days: 7
