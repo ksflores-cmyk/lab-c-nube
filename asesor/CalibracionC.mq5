@@ -1,3 +1,6 @@
+// COPIA DE LA NUBE; cuenta desde el historial de la cuenta (21 nov 2026): la nube arranca cada dia con el terminal vacio, asi que
+// las operaciones hechas se cuentan con las entradas de la cuenta demo (ver EntradasEnLaCuenta), no con CalibC_n.
+// Limite conocido: un dia invalido futuro (reinicio o ticks incompletos) ocupa cupo hasta que su fecha se agregue a NO_CUENTAN_FECHAS.
 // Experimento C (propuesto por el laboratorio de Rodrigo; Kevin: "Hacer C", 17 nov 2026).
 // Asesor Experto SÓLO PARA LA CUENTA DEMO: corre la estrategia 4 del simulador (venta de la mañana de Nueva York)
 // para calibrar el simulador contra el bróker. No busca ganar: busca que la demo y el simulador coincidan.
@@ -20,6 +23,15 @@
 #define MAX_OPS       20
 #define MAGICO        26111701
 #define CARPETA       "calibracion-c\\"
+// Conteo desde el historial de la cuenta (copia de la nube). INICIO_C: primer dia del experimento (hora del servidor).
+// NO_CUENTAN_FECHAS (abajo): fechas de entradas del asesor que estan en el historial pero no sirven para el contraste.
+#define INICIO_C      D'2026.11.17 00:00'
+// Piso conocido: al 21 nov 2026 la cuenta ya tiene entradas de 3 fechas (17, 18 y 20 nov). Si el historial trae menos, es que
+// aun no termino de llegar (terminal recien abierto): se trata como lectura fallida y no se vende.
+#define ENTRADAS_MINIMAS 3
+// Fechas (Nueva York) de entradas que no sirven para el contraste. Si la revision diaria encuentra otra (reinicio o ticks
+// incompletos), se agrega aqui. 17 nov 2026: entrada sin registro valido (no cuenta en el contraste).
+string NO_CUENTAN_FECHAS[] = {"2026-11-17"};
 
 // ---------- hora de Nueva York (horario de verano de EE. UU.: 2.º domingo de marzo a 1.er domingo de noviembre)
 datetime DomingoN(int anio, int mes, int n) { // n-ésimo domingo del mes, 00:00
@@ -96,6 +108,50 @@ int OperoHoyEnLaCuenta(string fecha) {
    return 0;
 }
 
+// Cuenta las FECHAS de Nueva York distintas con una entrada (DEAL_ENTRY_IN) de este asesor (numero magico) en SIMBOLO,
+// desde INICIO_C, leyendo el historial de la CUENTA (la copia de la nube no conserva variables entre dias).
+// Devuelve -1 (y deja el detalle en gErrHist) si cualquier lectura falla, si el desfase horario es imposible (>14 h) o si
+// aparecen menos de ENTRADAS_MINIMAS fechas: en esos casos no se vende. Deja las fechas en gFechasCuenta.
+string gFechasCuenta[];
+int EntradasEnLaCuenta() {
+   long desfase = (long)(TimeTradeServer() - TimeGMT());
+   if(desfase > 14 * 3600 || desfase < -14 * 3600) { gErrHist = StringFormat("desfase horario imposible (%I64d s)", desfase); return -1; }
+   if(!HistorySelect(INICIO_C, TimeTradeServer() + 3600)) { gErrHist = StringFormat("fallo HistorySelect, error %d", GetLastError()); return -1; }
+   string fechas[]; int nf = 0;
+   ArrayResize(gFechasCuenta, 0);
+   for(int i = HistoryDealsTotal() - 1; i >= 0; i--) {
+      ulong d = HistoryDealGetTicket(i);
+      if(d == 0) { gErrHist = StringFormat("fallo HistoryDealGetTicket(%d), error %d", i, GetLastError()); return -1; }
+      long magico = 0, entrada = 0, hora = 0; string simbolo = "";
+      if(!HistoryDealGetInteger(d, DEAL_MAGIC, magico)) { gErrHist = StringFormat("fallo DEAL_MAGIC del deal %I64u, error %d", d, GetLastError()); return -1; }
+      if(magico != MAGICO) continue;
+      if(!HistoryDealGetInteger(d, DEAL_ENTRY, entrada) || !HistoryDealGetInteger(d, DEAL_TIME, hora)) { gErrHist = StringFormat("fallo DEAL_ENTRY/DEAL_TIME del deal %I64u, error %d", d, GetLastError()); return -1; }
+      if(entrada != DEAL_ENTRY_IN) continue;
+      if(!HistoryDealGetString(d, DEAL_SYMBOL, simbolo)) { gErrHist = StringFormat("fallo DEAL_SYMBOL del deal %I64u, error %d", d, GetLastError()); return -1; }
+      if(simbolo != SIMBOLO) continue;
+      string f = FechaNY((datetime)(hora - desfase));
+      bool ya = false;
+      for(int k = 0; k < nf; k++) if(fechas[k] == f) { ya = true; break; }
+      if(!ya) { ArrayResize(fechas, nf + 1); fechas[nf] = f; nf++; }
+   }
+   if(nf < ENTRADAS_MINIMAS) { gErrHist = StringFormat("el historial trae %d fechas con entrada y se esperaban al menos %d", nf, ENTRADAS_MINIMAS); return -1; }
+   ArrayResize(gFechasCuenta, nf);
+   for(int k = 0; k < nf; k++) gFechasCuenta[k] = fechas[k];
+   return nf;
+}
+// Operaciones validas hechas segun la cuenta: fechas distintas con entrada que NO estan en NO_CUENTAN_FECHAS; -1 si no se pudo leer.
+int Hechas() {
+   int n = EntradasEnLaCuenta();
+   if(n < 0) return -1;
+   int validas = 0;
+   for(int i = 0; i < n; i++) {
+      bool fuera = false;
+      for(int k = 0; k < ArraySize(NO_CUENTAN_FECHAS); k++) if(NO_CUENTAN_FECHAS[k] == gFechasCuenta[i]) { fuera = true; break; }
+      if(!fuera) validas++;
+   }
+   return validas;
+}
+
 // ---------- estado de la operación del día (en memoria; el día operado y el conteo, en variables globales de MT5)
 string gFecha = ""; ulong gPos = 0; MqlTick gTickEnt; double gPedidoEnt = 0, gLatEnt = 0; uint gRetEnt = 0; double gSaldo0 = 0;
 MqlTick gTickSal; double gPedidoSal = 0, gLatSal = 0; uint gRetSal = 0; bool gCerrando = false; datetime gCerradaEn = 0; string gAviso = "";
@@ -113,7 +169,9 @@ int OnInit() {
    if(p > 0) { gPos = p; gFecha = FechaNY(TimeGMT()); gReinicio = true; Print("CalibracionC: adopté una posición abierta tras un reinicio"); }
    EventSetTimer(1);
    string motivo = "";
-   Print("CalibracionC: listo. Operaciones hechas: ", (int)Gv("CalibC_n", 0), " de ", MAX_OPS,
+   int hechasInit = Hechas();
+   string textoHechas = (hechasInit < 0) ? "historial no legible" : IntegerToString(hechasInit);
+   Print("CalibracionC: listo. Operaciones hechas (según la cuenta): ", textoHechas, " de ", MAX_OPS,
          ". Trading algorítmico en el terminal: ", (TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) ? "sí" : "NO"),
          "; en este asesor: ", (MQLInfoInteger(MQL_TRADE_ALLOWED) ? "sí" : "NO"),
          "; cuenta: ", (CuentaValida(motivo) ? "demo ok" : motivo));
@@ -169,9 +227,12 @@ void Paso() {
 
    // 3. Sin posición: ¿toca entrar?
    if(!cuentaOk) return;
-   if((int)Gv("CalibC_n", 0) >= MAX_OPS) return;
    if(dow == 0 || dow == 6) return;
    if(minNY < ENTRADA_NY || minNY > ENTRADA_NY + VENTANA_MIN || minNY >= SALIDA_NY) return;
+   // Tope de 20 segun el historial de la CUENTA (la nube no conserva CalibC_n); se lee solo dentro de la ventana de entrada.
+   int hechas = Hechas();
+   if(hechas < 0) { if(gAviso != "historial") { Print("CalibracionC: no pude leer el historial de la cuenta; no vendo y reintento: ", gErrHist); gAviso = "historial"; } return; }
+   if(hechas >= MAX_OPS) { if(gAviso != "tope") { Print("CalibracionC: ya hay 20 de 20 en la cuenta; no vendo"); gAviso = "tope"; } return; }
    if(GlobalVariableCheck("CalibC_dia_" + fecha)) return; // ya operó hoy (este terminal)
    int hoy = OperoHoyEnLaCuenta(fecha);
    if(hoy == 1) { if(gAviso != "candado") { Print("CalibracionC: la cuenta ya tiene una entrada de hoy; no vendo (candado C)"); gAviso = "candado"; } return; }
@@ -226,7 +287,11 @@ bool Registrar() {
       csv += "\"exness\",\"XAUUSDm\",\"" + f + " " + h + "." + StringFormat("%03d", (int)(tk[i].time_msc % 1000)) + "Z\"," + N(tk[i].bid) + "," + N(tk[i].ask) + "\n";
    }
    if(!Escribir(gFecha + "_ticks.csv", csv)) return false;
-   int nOps = (int)Gv("CalibC_n", 0) + ((gReinicio || !completos) ? 0 : 1); // las de reinicio o sin ticks completos no cuentan
+   // La entrada de hoy ya esta en el historial: Hechas() la incluye. Si hoy es invalida (reinicio o ticks incompletos) se resta.
+   // Si no se pudo contar, numero = -1 (sin respaldo en CalibC_n: en la nube vale 0 siempre).
+   int hechasReg = Hechas();
+   int nOps = -1;
+   if(hechasReg >= 0) { nOps = hechasReg - ((gReinicio || !completos) ? 1 : 0); if(nOps < 0) nOps = 0; }
    // desfase de la hora del servidor contra UTC (los ticks se exportan con la hora del servidor; Exness usa UTC)
    long desfase = (long)(TimeTradeServer() - TimeGMT());
    string j = "{\n \"fecha\": " + Q(gFecha) + ", \"numero\": " + IntegerToString(nOps) + ", \"cuenta\": \"demo\", \"lote\": " + N(LOTE, 2) + ", \"stopUSD\": " + N(STOP_USD, 1) +
@@ -239,7 +304,7 @@ bool Registrar() {
    j += " \"comision\": " + N(com, 2) + ", \"swap\": " + N(swp, 2) + ", \"beneficio\": " + N(ben, 2) + ", \"resultado\": " + N(ben + com + swp, 2) +
         ", \"saldoAntes\": " + N(gSaldo0, 2) + ", \"ticksExportados\": " + IntegerToString(n) + "\n}\n";
    if(!Escribir(gFecha + ".json", j)) return false;
-   GlobalVariableSet("CalibC_n", nOps); // se cuenta sólo si quedó escrita (revisión de Codex)
+   if(nOps >= 0) GlobalVariableSet("CalibC_n", nOps); // sólo si se pudo contar y quedó escrita (revisión de Codex)
    gReinicio = false; gIntentosTicks = 0;
    Print("CalibracionC: operación ", nOps, " de ", MAX_OPS, " registrada: ", N(ben + com + swp, 2), " USD");
    return true;
