@@ -14,8 +14,8 @@ on:
         description: 'Prueba de humo: entra a la demo, carga el asesor y cierra a los 3 minutos (no espera la venta)'
         type: boolean
         default: true
-  # schedule:
-  #   - cron: '47 12 * * 1-5'   # 12:47 UTC = 7:47 NY en INVIERNO (hasta el 14 mar 2027); el asesor espera solo a las 8:30.
+  schedule:  # encendido el 23 nov 2026 ("nube desde que salga bien la prueba de humo"; humo #2 en verde)
+    - cron: '47 12 * * 1-5'   # 12:47 UTC = 7:47 NY en INVIERNO (hasta el 14 mar 2027); el asesor espera solo a las 8:30.
   #                             # En verano de EE. UU. (desde el 14 mar 2027) cambiar a '47 11 * * 1-5' (Codex c1, H6).
 concurrency:
   group: experimento-c
@@ -44,4 +44,4 @@ jobs:
         with:
           name: experimento-c-${{ github.run_id }}
           path: ${{ runner.temp }}/c-nube
-          retention-days: 7
+          retention-days: 2  # aviso A-20261120-7: repo publico
