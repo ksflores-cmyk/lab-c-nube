@@ -44,4 +44,4 @@ jobs:
         with:
           name: experimento-c-${{ github.run_id }}
           path: ${{ runner.temp }}/c-nube
-          retention-days: 2  # aviso A-20261120-7: repo publico
+          retention-days: 7  # se queda en 7 (23 nov): bajar los registros de C pide sesion en GitHub y no siempre se podra en 2 dias
